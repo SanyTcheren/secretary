@@ -4,6 +4,7 @@
 from pathlib import Path
 from datetime import datetime, timedelta
 from dataclasses import dataclass
+from calendar import monthrange
 import shelve
 import logging
 import openpyxl
@@ -33,7 +34,7 @@ class Worker():
     position: str = None
     start: int = 0
     finish: int = 0
-    sign: Image = None
+    sign: str = None
 
     def __str__(self):
         """Данные по рабочему."""
@@ -43,12 +44,13 @@ class Worker():
     name: {self.name}
     position: {self.position}
     working from {self.start} to {self.finish}
-    sign size: {height} X {width}
+    sign_path: {self.sign}
     """
 
 class Secretary:
     """My beautiful girl."""
 
+    monthly_path = './blank/monthly.xlsx' # файл с образцом месячного отчета ППР
     staff_path = './staff.xlsx' # файл с данными по персоналу
     sign_path = './temp_sign.png' # файл для временного хранения подписи
     oil_path = './blank/oil.xlsx' # файл с образцом отчета по ДЭС
@@ -91,15 +93,17 @@ class Secretary:
             name = staff_sheet[f"E{3+i}"].value
             position = staff_sheet[f"D{3+i}"].value
             sign = image_loader.get(f'F{3+i}')
-            sign.save(self.sign_path)
-            worker = Worker(name, position, start, finish, Image(self.sign_path))
+            sign_path = f"signs/sign_{i}.png"
+            sign.save(sign_path)
+            worker = Worker(name, position, start, finish, sign_path)
             workers.append(worker)
         return workers
 
-    def get_workers(self, day):
+    def get_workers(self, day, staff=None):
         """Получение списка рабочих по дню."""
         workers = []
-        staff = self.get_staff()
+        if staff is None:
+            staff = self.get_staff()
         for worker in staff:
             if worker.start <= day <= worker.finish:
                 workers.append(worker)
@@ -107,11 +111,11 @@ class Secretary:
 
     def get_job(self, day):
         """Получение работы за текущий день."""
-        jobs_wb = openpyxl.load_workbook(Secretary.jobs_path)
+        jobs_wb = openpyxl.load_workbook(Secretary.monthly_path)
         jobs_sheet = jobs_wb.active
-        detail = jobs_sheet.cell(row=day, column=3).value
-        device = jobs_sheet.cell(row=day, column=2).value
-        place = jobs_sheet.cell(row=day, column=1).value
+        detail = jobs_sheet.cell(row=(1+3*day), column=4).value
+        device = jobs_sheet.cell(row=(1+3*day), column=3).value
+        place = jobs_sheet.cell(row=(1+3*day), column=2).value
         job = Job(place, device, detail)
         return job
 
@@ -150,13 +154,49 @@ class Secretary:
         logging.info('Создан и отправлен суточный отчет.')
 
     def monthly_report(self, today):
-        """Создание и отправка месячного отчета ППР."""
+        """
+        Создание и отправка месячного отчета ППР.
+        Месяц оперделяется по вчерашнему дню.
+        """
+        months = ['январь','февраль','март','апрель','май','июнь','июль',
+                 'август','сентябрь','октябрь','ноябрь','декабрь']
+        # определяем месяц вчерашнего дня (1-12)
+        month = (today - timedelta(days=1)).month
+#       month = 2 # FOR TEST!!!
+        year = (today - timedelta(days=1)).year
+        # определяем колличество дней в месяце
+        days = monthrange(year, month)[1]
+        staff = self.get_staff()
+
+        monthly_wb = openpyxl.load_workbook(Secretary.monthly_path)
+        monthly_sheet = monthly_wb.active
+        monthly_sheet['A1'] = f"Отчет ППР {self.brigade}бр за {months[month-1]} {year}года"
+        for i in range(1,32):
+            row_day = 1 + 3*i
+            if i <= days:
+                day = datetime(year,month,i).date()
+                monthly_sheet['A'+str(row_day)] = day
+# Для того что бы не читать файл на каждой итерации, вызываем с get_workers с
+# переменной staff
+                workers = self.get_workers(day.day, staff)
+                for inx, worker in enumerate(workers):
+                    monthly_sheet['E'+str(row_day+inx)] = f"{worker.position} {worker.name}"
+                    monthly_sheet.add_image(Image(worker.sign), 'F'+str(row_day+inx))
+            else:
+                count = 3*(32-i) # Колличество лишних строк в отчете
+                monthly_sheet.delete_rows(row_day, count)
+                break
+
+        monthly_report = f"reports/{self.brigade}бр_Отчет_ППР_за_{months[month-1]}_{year}года"
+        monthly_wb.save(monthly_report+'.xlsx')
+
         logging.info('Создан и отправлен месячный отчет ППР.')
 
     def work(self):
         """Выполнение основных обязаностей."""
         today = datetime.now()
-        self.monthly_report(today)
+        if today.day == 26:
+            self.monthly_report(today)
 #       self.daily_report(today)
         logging.info('Work completed.')
 
@@ -192,9 +232,6 @@ def main():
                         format="%(asctime)s%(levelname)s[%(name)s] %(message)s")
     secretary = Secretary()
     secretary.work()
-    workers = secretary.get_workers(day.day)
-    for worker in workers:
-        print(worker)
 
 
 if __name__ == '__main__':

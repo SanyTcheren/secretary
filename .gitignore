@@ -1,6 +1,6 @@
 token.json
 credentials.json
 init.data*
-temp*
 logs/*
 reports/*
+signs/*
